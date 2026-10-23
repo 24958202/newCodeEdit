@@ -38,7 +38,6 @@ Designed for developers who love first-principles engineering, zero-bloat native
 ### Build Command
 
 cmake -S . -B build
-
 cmake --build build -j4
 
 
