@@ -36,6 +36,11 @@ Designed for developers who love first-principles engineering, zero-bloat native
 * [Saucer](https://github.com/saucer/saucer) built locally with its dependencies (`coco`, `glaze`, etc.)
 
 ### Build Command
+
+cmake -S . -B build
+cmake --build build -j4
+
+
 Compile the single-file application with your local Saucer library paths:
 
 ```bash
