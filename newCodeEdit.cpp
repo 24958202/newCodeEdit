@@ -1,4 +1,4 @@
-// newCodeEdit - Updated for Saucer v7+ API with embedded logo.xpm.
+// newCodeEdit - Updated with embedded logo.xpm and programmatic icon loader.
 // macOS only (osascript dialogs, POSIX file I/O). Needs C++23 (std::expected).
 #include <saucer/app.hpp>
 #include <saucer/smartview.hpp>
@@ -17,10 +17,16 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
+#include <map>
 
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+#import <Cocoa/Cocoa.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -64,6 +70,63 @@ static const char* logo_xpm[] = {
 "................................",
 "................................"
 };
+
+#ifdef __APPLE__
+void set_app_icon_from_xpm(const char* xpm[]) {
+    int width = 0, height = 0, ncolors = 0, cpp = 0;
+    if (sscanf(xpm[0], "%d %d %d %d", &width, &height, &ncolors, &cpp) != 4) return;
+
+    std::map<std::string, uint32_t> color_map;
+    int idx = 1;
+    for (int i = 0; i < ncolors; ++i, ++idx) {
+        std::string line(xpm[idx]);
+        std::string key = line.substr(0, cpp);
+        size_t c_pos = line.find("c ");
+        if (c_pos == std::string::npos) continue;
+        std::string color_val = line.substr(c_pos + 2);
+        while (!color_val.empty() && color_val.front() == ' ') color_val.erase(color_val.begin());
+        while (!color_val.empty() && color_val.back() == ' ') color_val.pop_back();
+
+        uint32_t rgba = 0;
+        if (color_val == "None") {
+            rgba = 0x00000000;
+        } else if (color_val[0] == '#') {
+            unsigned int hex = std::stoul(color_val.substr(1), nullptr, 16);
+            rgba = (color_val.size() == 7) ? (hex << 8) | 0xFF : hex;
+        }
+        color_map[key] = rgba;
+    }
+
+    std::vector<uint8_t> pixels(width * height * 4, 0);
+    for (int y = 0; y < height; ++y, ++idx) {
+        std::string row(xpm[idx]);
+        for (int x = 0; x < width; ++x) {
+            std::string key = row.substr(x * cpp, cpp);
+            uint32_t rgba = color_map.count(key) ? color_map[key] : 0x00000000;
+            int p_idx = (y * width + x) * 4;
+            pixels[p_idx + 0] = (rgba >> 24) & 0xFF; // R
+            pixels[p_idx + 1] = (rgba >> 16) & 0xFF; // G
+            pixels[p_idx + 2] = (rgba >> 8) & 0xFF;  // B
+            pixels[p_idx + 3] = rgba & 0xFF;         // A
+        }
+    }
+
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nil
+                                                                    pixelsWide:width
+                                                                    pixelsHigh:height
+                                                                 bitsPerSample:8
+                                                               samplesPerPixel:4
+                                                                      hasAlpha:YES
+                                                                      isPlanar:NO
+                                                                colorSpaceName:NSCalibratedRGBColorSpace
+                                                                   bytesPerRow:width * 4
+                                                                  bitsPerPixel:32];
+    std::memcpy([rep bitmapData], pixels.data(), pixels.size());
+    NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(width, height)];
+    [image addRepresentation:rep];
+    [NSApp setApplicationIconImage:image];
+}
+#endif
 
 // ==== BEGIN HELPERS (plain C++, no Saucer types) ============================
 
@@ -527,6 +590,10 @@ static constexpr std::string_view ui_html = R"HTML(
 
 // --- SAUCER V7+ LIFECYCLE ---
 coco::stray start(saucer::application* app) {
+#ifdef __APPLE__
+    set_app_icon_from_xpm(logo_xpm);
+#endif
+
     auto window = saucer::window::create(app).value();
     auto webview = saucer::smartview::create({.window = window});
 
