@@ -43,6 +43,8 @@ cmake --build build -j4
 
 sudo cmake --install build
 
+Or
+
 Compile the single-file application with your local Saucer library paths:
 
 ```bash
