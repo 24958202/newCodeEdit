@@ -38,7 +38,9 @@ Designed for developers who love first-principles engineering, zero-bloat native
 ### Build Command
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
+
 cmake --build build -j4
+
 sudo cmake --install build
 
 Compile the single-file application with your local Saucer library paths:
