@@ -6,7 +6,7 @@
 # ==============================================================================
 set -euo pipefail
 
-REPO_OWNER="${NEWCODEEDIT_REPO_OWNER:-YOUR_GITHUB_USERNAME}"
+REPO_OWNER="${NEWCODEEDIT_REPO_OWNER:-24958202}"
 REPO_NAME="${NEWCODEEDIT_REPO_NAME:-newCodeEdit}"
 REPO_BRANCH="${NEWCODEEDIT_REPO_BRANCH:-main}"
 REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
