@@ -35,35 +35,3 @@ Designed for developers who love first-principles engineering, zero-bloat native
 * LLVM Clang with full C++23 support (`/opt/homebrew/opt/llvm/bin/clang++`)
 * [Saucer](https://github.com/saucer/saucer) built locally with its dependencies (`coco`, `glaze`, etc.)
 
-### Build Command
-
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-
-cmake --build build -j4
-
-sudo cmake --install build
-
-Or
-
-Compile the single-file application with your local Saucer library paths:
-
-```bash
-/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -arch arm64 \
-  -Wno-unknown-attributes -Wno-missing-braces \
-  -DFILL_NAMESPACE=std -DSAUCER_WEBKIT -DSAUCER_WEBKIT_PRIVATE \
-  -include /path/to/libs/saucer/build/_deps/saucer-fill-src/include/functional.hpp \
-  -I/path/to/saucer \
-  -I/path/to/libs/saucer/include \
-  -I/path/to/libs/saucer/build/_deps/coco-src/include \
-  -I/path/to/libs/saucer/build/_deps/rebind-src/include \
-  -I/path/to/libs/saucer/build/_deps/ereignis-src/include \
-  -I/path/to/libs/saucer/build/_deps/polo-src/include \
-  -I/path/to/libs/saucer/build/_deps/saucer-fill-src/include \
-  -I/path/to/libs/saucer/build/_deps/functional-src/include \
-  -I/path/to/libs/saucer/build/_deps/saucer-desktop-src/include \
-  -isystem /path/to/libs/saucer/build/_deps/glaze-src/include \
-  newCodeEdit.cpp -o newCodeEdit \
-  /path/to/libs/saucer/build/libsaucer.a \
-  /path/to/libs/saucer/build/_deps/saucer-desktop-build/libsaucer-desktop.a \
-  /path/to/libs/saucer/build/_deps/coco-build/libcoco.a \
-  -L/opt/homebrew/opt/llvm/lib -framework Cocoa -framework WebKit -framework CoreImage
