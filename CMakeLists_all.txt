@@ -1,0 +1,367 @@
+cmake_minimum_required(VERSION 3.25)
+
+# Automatically prefer Homebrew LLVM Clang if present on macOS (checked before project())
+if(APPLE)
+    if(EXISTS "/opt/homebrew/opt/llvm/bin/clang++")
+        set(CMAKE_CXX_COMPILER "/opt/homebrew/opt/llvm/bin/clang++")
+        set(CMAKE_OBJCXX_COMPILER "/opt/homebrew/opt/llvm/bin/clang++")
+    elseif(EXISTS "/usr/local/opt/llvm/bin/clang++")
+        set(CMAKE_CXX_COMPILER "/usr/local/opt/llvm/bin/clang++")
+        set(CMAKE_OBJCXX_COMPILER "/usr/local/opt/llvm/bin/clang++")
+    endif()
+endif()
+
+project(newCodeEdit VERSION 1.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(APPLE)
+    enable_language(OBJCXX)
+    set(CMAKE_OBJCXX_STANDARD 23)
+    set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+    set(CMAKE_OBJCXX_EXTENSIONS OFF)
+endif()
+
+# Path configuration (defaults to CMAKE_CURRENT_SOURCE_DIR so it works on Linux/Windows too)
+set(WORK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "Path to current work directory")
+set(SAUCER_ROOT "/Users/jidengfeng/Downloads/libs/saucer" CACHE PATH "Path to Saucer source root")
+set(SAUCER_BUILD_DIR "${SAUCER_ROOT}/build" CACHE PATH "Path to Saucer build directory")
+set(RESOURCES_DIR "${WORK_ROOT}/resources" CACHE PATH "Path to UI resources directory (js and vs)")
+
+# --- MACOS ICON (.icns) & INFO.PLIST GENERATION ---
+if(APPLE)
+    set(ICONSET_DIR "${CMAKE_BINARY_DIR}/newCodeEdit.iconset")
+    set(ICNS_FILE "${CMAKE_BINARY_DIR}/newCodeEdit.icns")
+    set(ICON_GEN_SRC "${CMAKE_BINARY_DIR}/gen_iconset.mm")
+    set(ICON_GEN_BIN "${CMAKE_BINARY_DIR}/gen_iconset")
+
+    file(WRITE "${ICON_GEN_SRC}" "
+#import <Cocoa/Cocoa.h>
+#include <cstring>
+#include <string>
+#include <vector>
+#include <map>
+
+static const char* logo_xpm[] = {
+\"32 32 4 1\",
+\"     c None\",
+\".    c #1E1E1E\",
+\"X    c #2D2D2D\",
+\"O    c #3794FF\",
+\"................................\",
+\"................................\",
+\"......XXXXXXXXXXXXXXXXXXXX......\",
+\"....XX....................XX....\",
+\"...  X........................X  ...\",
+\"..  X..........................X  ..\",
+\".  X............OO............X  .\",
+\".  X...........OOOO...........  .\",
+\".  X..........OO..OO..........  .\",
+\".  X.........OO...............  .\",
+\".  X.........OO...............  .\",
+\".  X..........OO..OO..........  .\",
+\".  X...........OOOO...........  .\",
+\".  X............OO............X  .\",
+\".  X..........................X  .\",
+\".  X..........................X  .\",
+\".  X..........................X  .\",
+\".  X............OO............X  .\",
+\".  X...........OOOO...........  .\",
+\".  X..........OO..OO..........  .\",
+\".  X.........OO...............  .\",
+\".  X.........OO...............  .\",
+\".  X..........OO..OO..........  .\",
+\".  X...........OOOO...........  .\",
+\".  X............OO............X  .\",
+\"..  X..........................X  ..\",
+\"...  X........................X  ...\",
+\"....XX....................XX....\",
+\"......XXXXXXXXXXXXXXXXXXXX......\",
+\"................................\",
+\"................................\",
+\"................................\"
+};
+
+void write_png(const std::vector<uint8_t>& base_px, int bw, int bh, int target_size, NSString* path) {
+    NSBitmapImageRep* rep = [[NSBitmapImageRep alloc]
+        initWithBitmapDataPlanes:nil
+                      pixelsWide:target_size
+                      pixelsHigh:target_size
+                   bitsPerSample:8
+                 samplesPerPixel:4
+                        hasAlpha:YES
+                        isPlanar:NO
+                  colorSpaceName:NSCalibratedRGBColorSpace
+                     bytesPerRow:target_size * 4
+                    bitsPerPixel:32];
+    uint8_t* dst = [rep bitmapData];
+    for (int y = 0; y < target_size; ++y) {
+        int sy = (y * bh) / target_size;
+        for (int x = 0; x < target_size; ++x) {
+            int sx = (x * bw) / target_size;
+            std::memcpy(dst + (y * target_size + x) * 4, &base_px[(sy * bw + sx) * 4], 4);
+        }
+    }
+    NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    [png writeToFile:path atomically:YES];
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) return 1;
+    @autoreleasepool {
+        int w = 32, h = 32;
+        std::map<char, uint32_t> cmap = {
+            {' ', 0x00000000},
+            {'.', 0x1E1E1EFF},
+            {'X', 0x2D2D2DFF},
+            {'O', 0x3794FFFF}
+        };
+        std::vector<uint8_t> px(w * h * 4, 0);
+        for (int y = 0; y < h; ++y) {
+            const char* row = logo_xpm[5 + y];
+            for (int x = 0; x < w; ++x) {
+                uint32_t c = cmap[row[x]];
+                int i = (y * w + x) * 4;
+                px[i + 0] = (c >> 24) & 0xFF;
+                px[i + 1] = (c >> 16) & 0xFF;
+                px[i + 2] = (c >> 8) & 0xFF;
+                px[i + 3] = c & 0xFF;
+            }
+        }
+        NSString* dir = [NSString stringWithUTF8String:argv[1]];
+        struct Spec { int sz; const char* name; } specs[] = {
+            {16,   \"icon_16x16.png\"},
+            {32,   \"icon_16x16@2x.png\"},
+            {32,   \"icon_32x32.png\"},
+            {64,   \"icon_32x32@2x.png\"},
+            {128,  \"icon_128x128.png\"},
+            {256,  \"icon_128x128@2x.png\"},
+            {256,  \"icon_256x256.png\"},
+            {512,  \"icon_256x256@2x.png\"},
+            {512,  \"icon_512x512.png\"},
+            {1024, \"icon_512x512@2x.png\"}
+        };
+        for (const auto& s : specs) {
+            NSString* p = [dir stringByAppendingPathComponent:[NSString stringWithUTF8String:s.name]];
+            write_png(px, w, h, s.sz, p);
+        }
+    }
+    return 0;
+}
+")
+
+    file(MAKE_DIRECTORY "${ICONSET_DIR}")
+    execute_process(
+        COMMAND "${CMAKE_OBJCXX_COMPILER}" -std=c++23 "${ICON_GEN_SRC}" -framework Cocoa -o "${ICON_GEN_BIN}"
+        RESULT_VARIABLE GEN_COMPILE_RES
+    )
+    if(GEN_COMPILE_RES EQUAL 0)
+        execute_process(COMMAND "${ICON_GEN_BIN}" "${ICONSET_DIR}")
+        execute_process(COMMAND "/usr/bin/iconutil" -c icns "${ICONSET_DIR}" -o "${ICNS_FILE}")
+    endif()
+
+    file(WRITE "${CMAKE_BINARY_DIR}/Info.plist.in" "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>\${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+    <key>CFBundleIconFile</key>
+    <string>newCodeEdit.icns</string>
+    <key>CFBundleIdentifier</key>
+    <string>\${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>\${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+")
+endif()
+
+# Create the executable
+if(APPLE AND EXISTS "${ICNS_FILE}")
+    add_executable(newCodeEdit MACOSX_BUNDLE newCodeEdit.cpp "${ICNS_FILE}")
+    set_source_files_properties("${ICNS_FILE}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+    set_source_files_properties(newCodeEdit.cpp PROPERTIES LANGUAGE OBJCXX)
+else()
+    add_executable(newCodeEdit WIN32 MACOSX_BUNDLE newCodeEdit.cpp)
+    if(APPLE)
+        set_source_files_properties(newCodeEdit.cpp PROPERTIES LANGUAGE OBJCXX)
+    endif()
+endif()
+
+# Include directories
+target_include_directories(newCodeEdit PRIVATE
+    "/opt/homebrew/include"
+    "/usr/local/include"
+    "${SAUCER_ROOT}/include"
+    "${SAUCER_BUILD_DIR}/_deps/coco-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/rebind-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/ereignis-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/polo-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/saucer-fill-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/functional-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/saucer-desktop-src/include"
+    "${SAUCER_BUILD_DIR}/_deps/glaze-src/include"
+    "${WORK_ROOT}"
+    "${WORK_ROOT}/reg"
+)
+
+# Preprocessor definitions
+target_compile_definitions(newCodeEdit PRIVATE FILL_NAMESPACE=std)
+if(APPLE)
+    target_compile_definitions(newCodeEdit PRIVATE SAUCER_WEBKIT SAUCER_WEBKIT_PRIVATE)
+elseif(UNIX)
+    target_compile_definitions(newCodeEdit PRIVATE SAUCER_WEBKITGTK)
+elseif(WIN32)
+    target_compile_definitions(newCodeEdit PRIVATE SAUCER_WEBVIEW2)
+endif()
+
+# Compiler flags (handle MSVC vs Clang/GCC)
+set(FUNC_HDR "${SAUCER_BUILD_DIR}/_deps/saucer-fill-src/include/functional.hpp")
+if(EXISTS "${FUNC_HDR}")
+    if(MSVC)
+        target_compile_options(newCodeEdit PRIVATE "/FI${FUNC_HDR}")
+    else()
+        target_compile_options(newCodeEdit PRIVATE
+            -Wno-unknown-attributes
+            -Wno-missing-braces
+            "SHELL:-include ${FUNC_HDR}"
+        )
+    endif()
+endif()
+
+# Link static libraries (handle Windows .lib vs Unix .a)
+if(MSVC)
+    target_link_libraries(newCodeEdit PRIVATE
+        "${SAUCER_BUILD_DIR}/saucer.lib"
+        "${SAUCER_BUILD_DIR}/_deps/saucer-desktop-build/saucer-desktop.lib"
+        "${SAUCER_BUILD_DIR}/_deps/coco-build/coco.lib"
+    )
+else()
+    target_link_libraries(newCodeEdit PRIVATE
+        "${SAUCER_BUILD_DIR}/libsaucer.a"
+        "${SAUCER_BUILD_DIR}/_deps/saucer-desktop-build/libsaucer-desktop.a"
+        "${SAUCER_BUILD_DIR}/_deps/coco-build/libcoco.a"
+    )
+endif()
+
+# --- 1. MACOS BUILD & INSTALL RULES ---
+if(APPLE)
+    if(EXISTS "/opt/homebrew/opt/llvm/lib")
+        target_link_directories(newCodeEdit PRIVATE "/opt/homebrew/opt/llvm/lib")
+    endif()
+    target_link_libraries(newCodeEdit PRIVATE
+        "-framework Cocoa"
+        "-framework WebKit"
+        "-framework CoreImage"
+    )
+    set_target_properties(newCodeEdit PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "newCodeEdit"
+        MACOSX_BUNDLE_ICON_FILE "newCodeEdit.icns"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "dev.ronnie.newcodeedit"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_BINARY_DIR}/Info.plist.in"
+    )
+
+    add_custom_command(TARGET newCodeEdit POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:newCodeEdit>/Resources"
+        COMMAND "${CMAKE_COMMAND}" -E copy "${RESOURCES_DIR}/icon.xpm" "$<TARGET_BUNDLE_CONTENT_DIR:newCodeEdit>/MacOS"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${RESOURCES_DIR}/js" "$<TARGET_BUNDLE_CONTENT_DIR:newCodeEdit>/Resources/js"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${RESOURCES_DIR}/vs" "$<TARGET_BUNDLE_CONTENT_DIR:newCodeEdit>/Resources/vs"
+        COMMAND "/usr/bin/find" "$<TARGET_BUNDLE_CONTENT_DIR:newCodeEdit>/Resources" -name ".DS_Store" -delete
+        COMMAND "/usr/bin/codesign" --force --deep --sign - "$<TARGET_BUNDLE_DIR:newCodeEdit>"
+        COMMENT "Bundling resources and ad-hoc signing newCodeEdit.app"
+    )
+
+    # Use relative "." destination so CPack DragNDrop places newCodeEdit.app at the root of the .dmg
+    install(TARGETS newCodeEdit BUNDLE DESTINATION ".")
+    install(FILES "${RESOURCES_DIR}/icon.xpm" DESTINATION "newCodeEdit.app/Contents/MacOS")
+    install(DIRECTORY "${RESOURCES_DIR}/js" "${RESOURCES_DIR}/vs"
+        DESTINATION "newCodeEdit.app/Contents/Resources"
+        PATTERN ".DS_Store" EXCLUDE
+    )
+
+    # Re-sign the staged .app bundle inside CPack's staging directory before the DMG is compressed
+    install(CODE "
+        set(STAGED_APP \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/newCodeEdit.app\")
+        execute_process(COMMAND \"/usr/bin/codesign\" --force --deep --sign - \"\${STAGED_APP}\" ERROR_QUIET)
+    ")
+endif()
+
+# --- 2. LINUX BUILD & INSTALL RULES ---
+if(UNIX AND NOT APPLE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(WEBKITGTK REQUIRED IMPORTED_TARGET webkitgtk-6.0 gtk4 libadwaita-1)
+    target_link_libraries(newCodeEdit PRIVATE PkgConfig::WEBKITGTK)
+
+    add_custom_command(TARGET newCodeEdit POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${RESOURCES_DIR}/js" "$<TARGET_FILE_DIR:newCodeEdit>/js"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${RESOURCES_DIR}/vs" "$<TARGET_FILE_DIR:newCodeEdit>/vs"
+    )
+
+    install(TARGETS newCodeEdit RUNTIME DESTINATION "bin")
+    install(DIRECTORY "${RESOURCES_DIR}/js" "${RESOURCES_DIR}/vs"
+        DESTINATION "bin"
+        PATTERN ".DS_Store" EXCLUDE
+    )
+endif()
+
+# --- 3. WINDOWS BUILD & INSTALL RULES ---
+if(WIN32)
+    target_link_libraries(newCodeEdit PRIVATE gdiplus dwmapi shlwapi ole32 user32)
+
+    add_custom_command(TARGET newCodeEdit POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${RESOURCES_DIR}/js" "$<TARGET_FILE_DIR:newCodeEdit>/js"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory "${RESOURCES_DIR}/vs" "$<TARGET_FILE_DIR:newCodeEdit>/vs"
+    )
+
+    install(TARGETS newCodeEdit RUNTIME DESTINATION "bin")
+    install(DIRECTORY "${RESOURCES_DIR}/js" "${RESOURCES_DIR}/vs"
+        DESTINATION "bin"
+        PATTERN ".DS_Store" EXCLUDE
+    )
+endif()
+
+# ==============================================================================
+# CROSS-PLATFORM PACKAGING VIA CPACK (.dmg / .deb / .exe)
+# ==============================================================================
+set(CPACK_PACKAGE_NAME "newCodeEdit")
+set(CPACK_PACKAGE_VENDOR "Ronnie")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "newCodeEdit - Lightweight Code Editor")
+set(CPACK_PACKAGE_EXECUTABLES "newCodeEdit" "newCodeEdit")
+
+if(APPLE)
+    # Generates a .dmg with an /Applications shortcut automatically
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "newCodeEdit")
+elseif(UNIX AND NOT APPLE)
+    # Generates a .deb package (add ";RPM" if you also want a .rpm on Fedora/RHEL)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/opt/newCodeEdit")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Ronnie <dev@ronnie.dev>")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "devel")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+elseif(WIN32)
+    # Generates a Windows Setup .exe installer (requires NSIS or Inno Setup installed)
+    # If using CMake 3.27+, you can also use "INNOSETUP" instead of "NSIS"
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_NSIS_DISPLAY_NAME "newCodeEdit")
+    set(CPACK_NSIS_PACKAGE_NAME "newCodeEdit")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+endif()
+
+include(CPack)
