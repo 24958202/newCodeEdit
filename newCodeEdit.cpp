@@ -1,13 +1,6 @@
 // newCodeEdit - Full Native Setup
 // macOS & Linux support. Needs C++23 (std::expected).
 // Needs nlohmann/json (find_package(nlohmann_json) + link nlohmann_json::nlohmann_json).
-/*
-    mkdir -p dmg_staging
-    cp -R build/newCodeEdit.app dmg_staging/
-    ln -s /Applications dmg_staging/Applications
-    hdiutil create -volname "newCodeEdit" -srcfolder dmg_staging -ov -format UDZO newCodeEdit-macOS-arm64.dmg
-    rm -rf dmg_staging
-*/
 #include <saucer/app.hpp>
 #include <saucer/smartview.hpp>
 #include <saucer/window.hpp>
@@ -57,7 +50,9 @@
 #include <dlfcn.h>
 #endif
 
-#include "window_raiser.hpp"
+#ifndef __APPLE__
+#include "window_raiser.hpp"   // title search fallback (Windows / Linux); macOS uses the registry below
+#endif
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -258,9 +253,84 @@ inline void trigger_new_process_document() {
 
 } // namespace sys_tray
 
+// --- ONE WINDOW PER FILE (pop-out windows) ---
+// Title of the pop-out window that shows `path`: "newCodeEdit - <file name>".
+static std::string window_title_for(const std::string& path) {
+    return "newCodeEdit - " + fs::path(path).filename().string();
+}
+
+// Same key for the same file, however its path is spelled (symlinks, "..", ...).
+static std::string path_key(const std::string& p) {
+    std::error_code ec;
+    const fs::path canon = fs::canonical(p, ec);
+    return ec ? fs::path(p).lexically_normal().string() : canon.string();
+}
+
+#ifndef __APPLE__
+// Windows / Linux: look for a window with that title and raise it.
+static bool raise_existing_window_for(const std::string& path) {
+    WindowRaiser raiser;
+    return raiser.search_processes_exist_title(window_title_for(path));
+}
+#endif
+
 #ifdef __APPLE__
 std::set<void*> g_editor_nswindows;
 std::mutex g_nswindows_mutex;
+
+// Which NSWindow shows which file. Looked up directly in this program (no OS window-list query, so no
+// permissions, no delay, and it also works for minimized windows and windows on other desktops).
+// Entries are removed when their window closes (see the close observer below).
+std::map<std::string, void*> g_popout_nswindows;
+std::mutex g_popout_mutex;
+
+static std::set<void*> snapshot_nswindows() {
+    std::set<void*> all;
+    for (NSWindow* w in [NSApp windows]) all.insert((__bridge void*)w);
+    return all;
+}
+
+// Remembers the NSWindow that appeared since `before` as the window that shows `path`.
+static void register_popout_window(const std::string& path, const std::string& title, const std::set<void*>& before) {
+    NSString* expected = [NSString stringWithUTF8String:title.c_str()];
+    void* chosen = nullptr;
+    void* fallback = nullptr;
+    for (NSWindow* w in [NSApp windows]) {
+        void* p = (__bridge void*)w;
+        if (before.count(p)) continue;
+        if (!([w styleMask] & NSWindowStyleMaskTitled)) continue;   // skip status-item / popup windows
+        if (!fallback) fallback = p;
+        if ([[w title] isEqualToString:expected]) { chosen = p; break; }
+    }
+    if (!chosen) chosen = fallback;
+    if (chosen) {
+        std::lock_guard<std::mutex> lock(g_popout_mutex);
+        g_popout_nswindows[path_key(path)] = chosen;
+    }
+}
+
+// If `path` is already open in a pop-out window: bring that window to the front and return true.
+static bool raise_existing_window_for(const std::string& path) {
+    const std::string key = path_key(path);
+    void* target = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_popout_mutex);
+        const auto it = g_popout_nswindows.find(key);
+        if (it != g_popout_nswindows.end()) target = it->second;
+    }
+    if (!target) return false;
+    for (NSWindow* w in [NSApp windows]) {
+        if ((__bridge void*)w == target) {
+            if ([w isMiniaturized]) [w deminiaturize:nil];
+            [w makeKeyAndOrderFront:nil];
+            [NSApp activateIgnoringOtherApps:YES];
+            return true;
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_popout_mutex);   // the window is gone: forget it
+    g_popout_nswindows.erase(key);
+    return false;
+}
 static NSStatusItem* g_status_item = nil;
 static id g_tray_target = nil;
 
@@ -381,7 +451,7 @@ void init_macos_system_tray(const char* xpm[]) {
             }
             // Also show a crisp "<>" label next to the icon so it is unmistakably visible
             // on both Dark and Light macOS menu bars
-            g_status_item.button.title = @"<>";
+            g_status_item.button.title = @"[]";
             g_status_item.button.toolTip = @"newCodeEdit - Click for New Document";
         }
 
@@ -461,7 +531,7 @@ void register_active_editor_nswindows() {
     for (NSWindow* win in [NSApp windows]) {
         if (![win isVisible]) continue;
         NSString* title = [win title];
-        if (title && ([title hasPrefix:@"newCodeEdit"] || [title isEqualToString:@"template"])) {
+        if (title && ([title hasPrefix:@"newCodeEdit - "] || [title isEqualToString:@"template"])) {
             g_editor_nswindows.insert((__bridge void*)win);
         }
     }
@@ -498,6 +568,13 @@ void install_macos_lifecycle_hooks() {
                 usingBlock:^(NSNotification* note) {
                     NSWindow* win = [note object];
                     if (!win) return;
+                    {
+                        std::lock_guard<std::mutex> lock(g_popout_mutex);
+                        for (auto it = g_popout_nswindows.begin(); it != g_popout_nswindows.end();) {
+                            if (it->second == (__bridge void*)win) it = g_popout_nswindows.erase(it);
+                            else ++it;
+                        }
+                    }
                     bool should_exit = false;
                     {
                         std::lock_guard<std::mutex> lock(g_nswindows_mutex);
@@ -1110,7 +1187,7 @@ static constexpr std::string_view ui_html = R"HTML(
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>newCodeEdit</title>
+    <title>::: newCodeEdit - sfxpop.com :::</title>
     <style>
         :root {
             --bg: #1e1e1e; --panel: #252526; --border: #333333;
@@ -1651,11 +1728,19 @@ static constexpr std::string_view ui_html = R"HTML(
             try { const path = await rpc('open_file_dialog'); if (path) await loadFile(path); } catch (err) { reportError('Could not open file', err); }
         }
 
+        // Window title of the main window: "newCodeEdit", or "newCodeEdit - <opened folder name>".
+        function updateWindowTitle() {
+            if (IS_MINIMAL) return;
+            const name = currentRoot ? currentRoot.split(/[\\/]/).filter(Boolean).pop() : '';
+            Promise.resolve(rpc('set_window_title', name ? 'newCodeEdit - ' + name : 'newCodeEdit')).catch(() => {});
+        }
+
         async function openFolder() {
             try {
                 const path = await rpc('open_folder_dialog');
                 if (!path) return;
                 currentRoot = path;
+                updateWindowTitle();
                 expandedDirs.clear();
                 sidebar.replaceChildren();
                 await renderDir(path, sidebar, 0);
@@ -1834,11 +1919,12 @@ std::atomic<int> g_window_counter{0};
 
 void create_editor_window(saucer::application* app, bool minimal, const std::string& path, const std::string& code) {
     if (!app) return;
-    std::string check_openned_win = "newCodeEdit - " + path;
-    WindowRaiser raiser;
-    if(raiser.search_processes_exist_title(check_openned_win)){
-        return;
-    }
+    // A file that is already open in a pop-out window is brought to the front instead of being opened again.
+    if (minimal && !path.empty() && raise_existing_window_for(path)) return;
+    const std::string check_openned_win = window_title_for(path);
+#ifdef __APPLE__
+    const std::set<void*> windows_before = (minimal && !path.empty()) ? snapshot_nswindows() : std::set<void*>{};
+#endif
     g_has_created_any_window = true;
     auto window = saucer::window::create(app).value();
     auto webview = saucer::smartview::create({.window = window});
@@ -1867,6 +1953,10 @@ void create_editor_window(saucer::application* app, bool minimal, const std::str
     auto* raw_window = window.get();
     webview->expose("close_window", [raw_window] {
         raw_window->close();
+    });
+    // Lets the main window show the opened folder in its title: "newCodeEdit - <folder name>".
+    webview->expose("set_window_title", [raw_window](const std::string& title) {
+        raw_window->set_title(title);
     });
     // Quits the whole application (used by File > Exit after it has saved modified files).
     webview->expose("exit_app", [] {
@@ -1915,6 +2005,7 @@ void create_editor_window(saucer::application* app, bool minimal, const std::str
     window->show();
 
 #ifdef __APPLE__
+    if (minimal && !path.empty()) register_popout_window(path, check_openned_win, windows_before);
     // Ensure system tray and Dock menu are active whenever any window shows
     init_cross_platform_system_tray();
     register_active_editor_nswindows();
@@ -1985,28 +2076,4 @@ coco::stray start(saucer::application* app) {
     cleanup_temp_files_and_exit();
 }
 
-int main(int argc, char* argv[]) {
 
-#ifdef __APPLE__
-    install_macos_lifecycle_hooks();
-#endif
-
-    // Accept all non-flag file arguments (e.g. from Linux %F or CLI)
-    // Ignore macOS Finder's legacy -psn_0_... process serial number argument
-    for (int i = 1; i < argc; ++i) {
-        if (argv[i][0] != '-') {
-            enqueue_incoming_path(argv[i]);
-        }
-    }
-
-    auto app = saucer::application::create({.id = "dev.ronnie.newcodeedit"});
-#ifdef __APPLE__
-    if ([NSApp delegate]) {
-        id del = [NSApp delegate];
-        attach_open_handlers_to_delegate(del);
-        [NSApp setDelegate:del];
-    }
-#endif
-
-    return app->run(start);
-}
