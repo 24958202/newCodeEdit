@@ -2076,4 +2076,28 @@ coco::stray start(saucer::application* app) {
     cleanup_temp_files_and_exit();
 }
 
+int main(int argc, char* argv[]) {
 
+#ifdef __APPLE__
+    install_macos_lifecycle_hooks();
+#endif
+
+    // Accept all non-flag file arguments (e.g. from Linux %F or CLI)
+    // Ignore macOS Finder's legacy -psn_0_... process serial number argument
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i][0] != '-') {
+            enqueue_incoming_path(argv[i]);
+        }
+    }
+
+    auto app = saucer::application::create({.id = "dev.ronnie.newcodeedit"});
+#ifdef __APPLE__
+    if ([NSApp delegate]) {
+        id del = [NSApp delegate];
+        attach_open_handlers_to_delegate(del);
+        [NSApp setDelegate:del];
+    }
+#endif
+
+    return app->run(start);
+}
